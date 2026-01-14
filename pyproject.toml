@@ -1,0 +1,15 @@
+[project]
+name = "trading-daemon"
+version = "0.1.0"
+description = "Market Trading Daemon using Gemini CLI and MCP"
+dependencies = [
+    "flask",
+    "requests",
+    "schedule",
+    "pytz",
+]
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

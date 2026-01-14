@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+src/config.py
+src/gemini_client.py
+src/main.py
+src/market.py
+src/state.py
+src/web_server.py
+src/trading_daemon.egg-info/PKG-INFO
+src/trading_daemon.egg-info/SOURCES.txt
+src/trading_daemon.egg-info/dependency_links.txt
+src/trading_daemon.egg-info/requires.txt
+src/trading_daemon.egg-info/top_level.txt
+tests/test_basic.py

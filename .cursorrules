@@ -1,0 +1,7 @@
+# Agent Rules
+
+1.  **Virtual Environment**: ALWAYS use the virtual environment located at `.venv` for running python commands.
+    -   Python executable: `.venv\Scripts\python.exe` (Windows)
+    -   Pip executable: `.venv\Scripts\pip.exe` (Windows)
+2.  **Execution**: When running scripts, use the full path to the venv python executable, e.g., `c:\src\trading-daemon\.venv\Scripts\python.exe src\main.py` OR ensure the venv is activated.
+3.  **Dependencies**: Install all dependencies into this venv.
