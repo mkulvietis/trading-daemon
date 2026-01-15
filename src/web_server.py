@@ -46,6 +46,7 @@ HTML_TEMPLATE = """
 
                     // Update Output
                     document.getElementById('output-text').textContent = data.last_output;
+                    document.getElementById('output-timestamp').textContent = '(' + (data.last_updated || 'N/A') + ')';
                 })
                 .catch(err => console.error('Failed to fetch status:', err));
         }
@@ -78,7 +79,7 @@ HTML_TEMPLATE = """
         </form>
     </div>
 
-    <h3>Latest Output</h3>
+    <h3>Latest Output <span id="output-timestamp" style="font-weight: normal; font-size: 0.85rem; color: #666;">({{ state.last_updated or 'N/A' }})</span></h3>
     <div class="output-container">
         <div id="output-text" class="output">{{ state.last_output }}</div>
         <div class="meta">Auto-refreshing every 20s...</div>
