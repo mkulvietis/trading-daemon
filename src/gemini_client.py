@@ -1,72 +1,101 @@
 import subprocess
 import shutil
 import logging
-import json
 import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
 class GeminiClient:
-    def __init__(self, system_prompt_path: str, user_prompt_path: str):
-        self.system_prompt_path = Path(system_prompt_path)
+    """
+    Client for running Gemini CLI in headless mode.
+    
+    Configuration is picked up from the .gemini folder in the project root:
+    - .gemini/.env: Contains GEMINI_SYSTEM_MD pointing to system prompt file
+    - .gemini/settings.json: Contains MCP server configuration
+    """
+    
+    def __init__(self, user_prompt_path: str):
+        """
+        Initialize the Gemini client.
+        
+        Args:
+            user_prompt_path: Path to the user prompt file.
+        """
         self.user_prompt_path = Path(user_prompt_path)
+        self.project_root = Path(__file__).parent.parent.resolve()
 
     def _read_file(self, path: Path) -> str:
+        """Read file contents, returning empty string if file doesn't exist."""
         if not path.exists():
             return ""
         with open(path, 'r', encoding='utf-8') as f:
             return f.read()
 
-    def _get_api_key(self) -> str:
+    def _load_dotenv(self) -> dict:
         """
-        Retrieves API key from settings.json if not already in env.
+        Load environment variables from .gemini/.env file.
+        Returns a dict of env vars to add to the environment.
         """
-        # If already in env, trust it
-        if os.environ.get("GEMINI_API_KEY"):
-            return os.environ["GEMINI_API_KEY"]
-
-        # Try to read from settings.json
-        try:
-            settings_path = Path(os.environ.get('USERPROFILE', '')) / ".gemini" / "settings.json"
-            if settings_path.exists():
-                with open(settings_path, 'r') as f:
-                    config = json.load(f)
-                    return config.get("apiKey", "")
-        except Exception:
-            pass
-        return ""
+        env_file = self.project_root / ".gemini" / ".env"
+        env_vars = {}
+        
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        env_vars[key.strip()] = value.strip()
+        
+        return env_vars
 
     def run_inference(self) -> str:
         """
-        Calls the Gemini CLI with the system and user prompts.
+        Calls the Gemini CLI in headless mode with -p parameter.
+        
+        The system prompt is read from the GEMINI_SYSTEM_MD environment variable
+        (set in .gemini/.env). MCP configuration is picked up from .gemini/settings.json.
         """
-        system_prompt = self._read_file(self.system_prompt_path)
         user_prompt = self._read_file(self.user_prompt_path)
         
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        if not user_prompt:
+            logger.warning("User prompt is empty")
+            return "Error: User prompt is empty"
 
-        # Prepare environment
-        env = os.environ.copy()
-        api_key = self._get_api_key()
-        if api_key:
-            env["GEMINI_API_KEY"] = api_key
-
+        # Find gemini executable
         gemini_exec = shutil.which("gemini")
         if not gemini_exec:
             logger.error("Gemini executable not found in PATH")
             return "Error: Gemini executable not found. Please install the Gemini CLI."
 
+        # Prepare environment - load .env from .gemini folder
+        env = os.environ.copy()
+        dotenv_vars = self._load_dotenv()
+        env.update(dotenv_vars)
+        
+        logger.info(f"Running gemini from: {self.project_root}")
+        logger.info(f"Using gemini executable: {gemini_exec}")
+        if "GEMINI_SYSTEM_MD" in env:
+            logger.info(f"System prompt: {env['GEMINI_SYSTEM_MD']}")
+
         try:
+            # Run in headless mode with -p parameter
             process = subprocess.run(
-                [gemini_exec], 
-                input=full_prompt, 
+                [
+                    gemini_exec,
+                    "--yolo",  # Auto-approve all tool calls (required for non-interactive)
+                    "-p", user_prompt,  # Headless mode with user prompt
+                ], 
                 text=True, 
                 capture_output=True,
                 check=True,
                 env=env,
-                encoding='utf-8' # Ensure UTF-8 handling
+                encoding='utf-8',
+                cwd=str(self.project_root),  # Run from project directory where .gemini/ is located
             )
+            logger.info(f"Gemini response:\n{process.stdout}")
             return process.stdout
             
         except subprocess.CalledProcessError as e:

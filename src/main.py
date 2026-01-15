@@ -108,11 +108,8 @@ def main():
     # 2. Setup Gemini CLI Config
     setup_gemini_config(config.get("mcp_url", "http://localhost:8000/mcp/"))
     
-    # 3. Initialize Client
-    client = GeminiClient(
-        system_prompt_path="prompts/system-prompt.md",
-        user_prompt_path="prompts/user-prompt.md"
-    )
+    # 3. Initialize Client (system prompt is read from GEMINI_SYSTEM_MD env var in .gemini/.env)
+    client = GeminiClient(user_prompt_path="prompts/user-prompt.md")
     
     # 4. Start Web Server in separate thread
     web_thread = threading.Thread(target=run_web_server, kwargs={'port': 8001}, daemon=True)

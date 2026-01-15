@@ -17,6 +17,11 @@ def check_gemini():
 
     prompt = "List all the tools you have access to from the trading-mcp server."
     
+    # Mirroring main.py env setup
+    env = os.environ.copy()
+    if api_key:
+        env["GEMINI_API_KEY"] = api_key
+
     try:
         print(f"Running query: {prompt}")
         proc = subprocess.run(
@@ -24,7 +29,8 @@ def check_gemini():
             input=prompt, 
             text=True, 
             capture_output=True,
-            encoding='utf-8'
+            encoding='utf-8',
+            env=env
         )
         print("\n--- STDOUT ---")
         print(proc.stdout)
