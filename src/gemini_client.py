@@ -58,7 +58,16 @@ class GeminiClient:
         The system prompt is read from the GEMINI_SYSTEM_MD environment variable
         (set in .gemini/.env). MCP configuration is picked up from .gemini/settings.json.
         """
-        user_prompt = self._read_file(self.user_prompt_path)
+        # Resolve user prompt path relative to project root
+        if self.user_prompt_path.is_absolute():
+            prompt_path = self.user_prompt_path
+        else:
+            prompt_path = self.project_root / self.user_prompt_path
+        
+        user_prompt = self._read_file(prompt_path)
+        
+        logger.info(f"User prompt path: {prompt_path}")
+        logger.info(f"User prompt content:\n{user_prompt[:500]}...")  # Log first 500 chars
         
         if not user_prompt:
             logger.warning("User prompt is empty")
@@ -82,12 +91,15 @@ class GeminiClient:
 
         try:
             # Run in headless mode with -p parameter
+            cmd = [
+                gemini_exec,
+                "--yolo",  # Auto-approve all tool calls (required for non-interactive)
+                "-p", user_prompt,  # Headless mode with user prompt
+            ]
+            logger.info(f"Command: {cmd[0]} {cmd[1]} -p '<prompt of {len(user_prompt)} chars>'")
+            
             process = subprocess.run(
-                [
-                    gemini_exec,
-                    "--yolo",  # Auto-approve all tool calls (required for non-interactive)
-                    "-p", user_prompt,  # Headless mode with user prompt
-                ], 
+                cmd, 
                 text=True, 
                 capture_output=True,
                 check=True,

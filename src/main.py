@@ -53,7 +53,6 @@ def job(client: GeminiClient):
         return
 
     logger.info("Running trading cycle...")
-    app_state.update_output("Running inference...")
 
     try:
         result = client.run_inference()

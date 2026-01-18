@@ -16,6 +16,7 @@ HTML_TEMPLATE = """
         .stopped { background-color: #f8d7da; color: #721c24; }
         .controls { background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; }
         .output-container { background: #2d2d2d; color: #fff; padding: 1rem; border-radius: 4px; min-height: 200px; }
+        .output-header { background: #1a1a2e; color: #00d9ff; padding: 0.75rem 1rem; margin: -1rem -1rem 1rem -1rem; border-radius: 4px 4px 0 0; font-size: 1rem; font-weight: bold; border-bottom: 2px solid #00d9ff; }
         .output { white-space: pre-wrap; font-family: monospace; }
         button { padding: 0.5rem 1rem; cursor: pointer; }
         .meta { font-size: 0.85rem; color: #888; margin-top: 0.5rem; border-top: 1px solid #444; padding-top: 0.5rem; }
@@ -79,8 +80,9 @@ HTML_TEMPLATE = """
         </form>
     </div>
 
-    <h3>Latest Output <span id="output-timestamp" style="font-weight: normal; font-size: 0.85rem; color: #666;">({{ state.last_updated or 'N/A' }})</span></h3>
+    <h3>Latest Output</h3>
     <div class="output-container">
+        <div id="output-header" class="output-header">📊 Analysis generated: <span id="output-timestamp">{{ state.last_updated or 'N/A' }}</span></div>
         <div id="output-text" class="output">{{ state.last_output }}</div>
         <div class="meta">Auto-refreshing every 20s...</div>
     </div>
