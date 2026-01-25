@@ -9,12 +9,15 @@ logger = logging.getLogger(__name__)
 
 class GeminiClient:
     """
-    Client for running Gemini CLI in headless mode.
+    Client for running Gemini CLI in headless mode with Pro model.
     
     Configuration is picked up from the .gemini folder in the project root:
     - .gemini/.env: Contains GEMINI_SYSTEM_MD pointing to system prompt file
     - .gemini/settings.json: Contains MCP server configuration
     """
+    
+    # Use Pro model for trading inference
+    MODEL = "gemini-2.5-pro"
     
     def __init__(self, user_prompt_path: str):
         """
@@ -54,6 +57,7 @@ class GeminiClient:
     def run_inference(self) -> str:
         """
         Calls the Gemini CLI in headless mode with -p parameter.
+        Uses Pro model for all inference requests.
         
         The system prompt is read from the GEMINI_SYSTEM_MD environment variable
         (set in .gemini/.env). MCP configuration is picked up from .gemini/settings.json.
@@ -90,13 +94,14 @@ class GeminiClient:
             logger.info(f"System prompt: {env['GEMINI_SYSTEM_MD']}")
 
         try:
-            # Run in headless mode with -p parameter
+            # Run in headless mode with Pro model
             cmd = [
                 gemini_exec,
+                "--model", self.MODEL,
                 "--yolo",  # Auto-approve all tool calls (required for non-interactive)
                 "-p", user_prompt,  # Headless mode with user prompt
             ]
-            logger.info(f"Command: {cmd[0]} {cmd[1]} -p '<prompt of {len(user_prompt)} chars>'")
+            logger.info(f"Command: {cmd[0]} --model {self.MODEL} --yolo -p '<prompt of {len(user_prompt)} chars>'")
             
             process = subprocess.run(
                 cmd, 

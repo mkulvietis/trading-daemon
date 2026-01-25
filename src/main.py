@@ -15,9 +15,9 @@ from src.state import app_state
 from src.market import is_market_open
 from src.config import setup_gemini_config
 from src.gemini_client import GeminiClient
-from src.web_server import run_web_server
+from src.web_server import run_web_server, set_gemini_client
 
-# Configure loggingpython 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -38,61 +38,83 @@ def load_config():
         logger.error(f"Failed to load config: {e}")
         return {"interval_seconds": 120, "mcp_url": "http://localhost:8000/mcp/"}
 
-def job(client: GeminiClient):
+def job_auto_inference(client: GeminiClient):
     """
-    The core trading logic task.
+    Task to check if we should run automatic inference.
     """
     if not app_state.is_running:
         return
 
-    # Check market hours if enabled (can be toggled in config, but for now hardcoded check)
-    # The requirement says "working days 9:30-16:00".
+    interval = app_state.get_auto_inference_interval()
+    if interval <= 0:
+        return
+
+    # Check if market is open if needed (assuming auto-inference respects market hours)
     if not is_market_open():
-        logger.info("Market closed. Skipping cycle.")
+        logger.info("Market closed. Skipping auto-inference.")
         app_state.update_output(f"Waiting for market open... (Last check: {time.strftime('%H:%M:%S')})")
         return
 
-    logger.info("Running trading cycle...")
+    # Check if inference is already running
+    if app_state.is_inference_running():
+        logger.info("Inference already running. Skipping auto trigger.")
+        return
 
+    # Check last update time to respect interval
+    snapshot = app_state.get_inference_snapshot()
+    last_completed = app_state.inference.completed_at # Access directly or parse from snapshot
+    
+    # Ideally we'd track last_auto_run_time separate from completion time
+    # For now, let's keep it simple: if not running, trigger it
+    
+    logger.info("Triggering auto-inference...")
+    app_state.start_inference()
+    
     try:
         result = client.run_inference()
-        logger.info("Cycle completed.")
-        app_state.update_output(result)
-        # Here you could also save result to history, database, etc.
+        # Check for various error patterns (CLI may exit 0 with error in stdout)
+        error_patterns = [
+            "Error",
+            "critical error",
+            "ModelNotFoundError",
+            "fetch failed",
+            "Exception",
+        ]
+        is_error = any(pattern in result for pattern in error_patterns)
+        
+        if is_error:
+            app_state.fail_inference(result)
+            logger.error(f"Auto-inference failed: {result[:500]}...")
+        else:
+            app_state.complete_inference(result)
+            app_state.update_output(result)
+            logger.info("Auto-inference completed.")
     except Exception as e:
-        logger.error(f"Cycle failed: {e}")
-        app_state.update_output(f"Error: {e}")
+        app_state.fail_inference(str(e))
+        logger.error(f"Auto-inference exception: {e}")
+
 
 def daemon_loop(client: GeminiClient):
     """
-    Continuous loop that respects the dynamic interval.
+    Continuous loop that manages automatic tasks.
     """
+    last_auto_run = time.time()  # Start with current time to prevent immediate trigger
+    
     while True:
         try:
-            # We don't use `schedule` library strictly if we want dynamic interval 
-            # because schedule is better for fixed times. 
-            # Simple sleep loop is better for dynamic interval.
+            current_time = time.time()
+            interval = app_state.get_auto_inference_interval()
             
-            start_time = time.time()
+            # Check if we should run auto-inference
+            if (app_state.is_running and 
+                interval > 0 and 
+                current_time - last_auto_run >= interval):
+                
+                job_auto_inference(client)
+                last_auto_run = time.time()
             
-            # Execute job
-            job(client)
-            
-            # Calculate wait time
-            elapsed = time.time() - start_time
-            wait_time = max(1, app_state.current_interval - elapsed)
-            
-            # Sleep in small chunks to allow responsive stop/config changes
-            # Wait at most `wait_time`, checking running state every second
-            wake_at = time.time() + wait_time
-            while time.time() < wake_at:
-                if not app_state.is_running:
-                    # If stopped, just idle comfortably
-                    time.sleep(1)
-                    # Reset wake_at so we don't drift? 
-                    # Actually if stopped, we should just wait until started.
-                    continue 
-                time.sleep(1)
+            # Sleep a bit to avoid CPU spin, but respond quickly to stop/config
+            time.sleep(1)
                 
         except Exception as e:
             logger.error(f"Loop error: {e}")
@@ -110,14 +132,16 @@ def main():
     # 3. Initialize Client (system prompt is read from GEMINI_SYSTEM_MD env var in .gemini/.env)
     client = GeminiClient(user_prompt_path="prompts/user-prompt.md")
     
+    # Set client for web server
+    set_gemini_client(client)
+    
     # 4. Start Web Server in separate thread
     web_thread = threading.Thread(target=run_web_server, kwargs={'port': 8001}, daemon=True)
     web_thread.start()
     logger.info("Web server started on port 8001")
     
-    # 5. Start Daemon Loop in main thread (or vice versa)
-    # Let's run daemon loop here.
-    app_state.set_running(True) # Start by default? Requirements imply "runs continuously".
+    # 5. Start Daemon Loop in main thread
+    app_state.set_running(True) 
     
     try:
         daemon_loop(client)
