@@ -1,0 +1,6 @@
+flask
+requests
+schedule
+pytz
+pydantic
+flask-cors

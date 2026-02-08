@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 from enum import Enum
 import pytz
+from .trade_manager import TradeManager
 
 NY_TZ = pytz.timezone('America/New_York')
 
@@ -24,6 +25,7 @@ class InferenceState:
     error: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    context: Optional[str] = None
 
 
 @dataclass
@@ -32,12 +34,16 @@ class DaemonState:
     last_output: str = "Daemon initializing..."
     current_interval: int = 120
     last_updated: Optional[datetime] = None
+    last_price: Optional[float] = None
     
     # Auto-inference interval (600 = 10 minutes default, 0 = disabled)
     auto_inference_interval: int = 600
     
     # Current inference state
     inference: InferenceState = field(default_factory=InferenceState)
+    
+    # Trade Management
+    trade_manager: TradeManager = field(default_factory=TradeManager)
     
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -64,12 +70,13 @@ class DaemonState:
         with self._lock:
             return self.auto_inference_interval
 
-    def start_inference(self):
+    def start_inference(self, context: str = None):
         """Mark inference as started."""
         with self._lock:
             self.inference = InferenceState(
                 status=InferenceStatus.RUNNING,
-                started_at=datetime.now(NY_TZ)
+                started_at=datetime.now(NY_TZ),
+                context=context
             )
 
     def complete_inference(self, result: str):
@@ -96,7 +103,8 @@ class DaemonState:
                 "result": self.inference.result,
                 "error": self.inference.error,
                 "started_at": self.inference.started_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.started_at else None,
-                "completed_at": self.inference.completed_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.completed_at else None
+                "completed_at": self.inference.completed_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.completed_at else None,
+                "context": self.inference.context
             }
 
     def is_inference_running(self) -> bool:
@@ -115,7 +123,8 @@ class DaemonState:
                 "last_output": self.last_output,
                 "current_interval": self.current_interval,
                 "last_updated": formatted_time,
-                "auto_inference_interval": self.auto_inference_interval
+                "auto_inference_interval": self.auto_inference_interval,
+                "active_setups": [s.model_dump() for s in self.trade_manager.get_active_setups()]
             }
 
 

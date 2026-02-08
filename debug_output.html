@@ -1,0 +1,229 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Trading Daemon</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; display: flex; flex-direction: column; }
+        
+        .header-container { padding: 0.75rem 1rem; border-bottom: 1px solid #30363d; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; }
+        h1 { color: #58a6ff; margin: 0; font-size: 1.25rem; }
+        
+        .main-container { flex: 1; min-height: 0; padding: 0.5rem; display: flex; flex-direction: column; }
+        .card { background: #161b22; border-radius: 8px; border: 1px solid #30363d; display: flex; flex-direction: column; flex: 1; min-height: 0; margin-bottom: 0.5rem; }
+        
+        .controls { padding: 0.75rem 1rem; border-bottom: 1px solid #30363d; flex-shrink: 0; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+        
+        .status-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-weight: 600; font-size: 0.8rem; }
+        .running { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
+        .idle { background: rgba(110, 118, 129, 0.2); color: #8b949e; }
+        
+        /* Tabs */
+        .tab-nav { display: flex; background: #21262d; border-bottom: 1px solid #30363d; }
+        .tab-btn { background: transparent; border: none; color: #8b949e; padding: 0.75rem 1rem; cursor: pointer; font-weight: 600; border-bottom: 2px solid transparent; }
+        .tab-btn:hover { color: #e6edf3; }
+        .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        
+        .tab-content { display: none; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+        .tab-content.active { display: flex; }
+
+        .output-content { flex: 1; padding: 1rem; overflow-y: auto; font-size: 0.85rem; color: #e6edf3; }
+        
+        /* Button Styles */
+        button { padding: 0.5rem 0.9rem; cursor: pointer; border: none; border-radius: 4px; font-weight: 600; font-size: 0.85rem; }
+        .btn-primary { background: #1f6feb; color: white; }
+        .btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+        input[type="number"] { padding: 0.4rem; border: 1px solid #30363d; border-radius: 4px; width: 55px; background: #0d1117; color: #e6edf3; }
+        
+        .auto-controls { display: flex; align-items: center; gap: 0.5rem; border-left: 1px solid #30363d; padding-left: 0.75rem; margin-left: 0.25rem; }
+        
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th, td { border-bottom: 1px solid #30363d; padding: 0.5rem; text-align: left; }
+        th { color: #8b949e; position: sticky; top: 0; background: #161b22; }
+    </style>
+    <script>
+        function switchTab(id) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('btn-' + id).classList.add('active');
+            document.getElementById('tab-' + id).classList.add('active');
+            localStorage.setItem('active_tab', id);
+        }
+
+        function jsonToYaml(obj, indent = 0) {
+            const spacing = '  '.repeat(indent);
+            if (obj === null) return 'null';
+            if (typeof obj !== 'object') return String(obj);
+            
+            let yaml = '';
+            if (Array.isArray(obj)) {
+                if (obj.length === 0) return '[]';
+                obj.forEach(item => {
+                    yaml += `${spacing}- ${jsonToYaml(item, indent + 1).trim()}\n`;
+                });
+            } else {
+                if (Object.keys(obj).length === 0) return '{}';
+                for (const [key, value] of Object.entries(obj)) {
+                    if (typeof value === 'object' && value !== null) {
+                        yaml += `${spacing}${key}:\n${jsonToYaml(value, indent + 1)}`;
+                    } else {
+                        yaml += `${spacing}${key}: ${value}\n`;
+                    }
+                }
+            }
+            return yaml;
+        }
+
+        function updateStatus() {
+            fetch('/api/inference')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('status-badge').className = 'status-badge ' + data.status;
+                    document.getElementById('status-badge').textContent = data.status.toUpperCase();
+                    
+                    const btn = document.getElementById('btn-run');
+                    btn.disabled = data.status === 'running';
+                    btn.textContent = data.status === 'running' ? '⟳ Running...' : '▶ Run';
+                    
+                    const output = document.getElementById('output-content');
+                    if (data.result) {
+                        try {
+                            const cleanJson = data.result.replace(/```json/g, '').replace(/```/g, '').trim();
+                            const parsed = JSON.parse(cleanJson);
+                            
+                            if (parsed.setups && Array.isArray(parsed.setups)) {
+                                let html = '';
+                                parsed.setups.forEach(setup => {
+                                    const color = setup.direction === 'LONG' ? '#3fb950' : '#f85149';
+                                    html += `
+                                        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                                <h3 style="margin: 0; color: ${color};">${setup.direction} ${setup.symbol}</h3>
+                                                <span class="status-badge" style="background: rgba(110, 118, 129, 0.2); color: #8b949e;">${setup.status || 'NEW'}</span>
+                                            </div>
+                                            <p style="margin: 0.5rem 0; color: #c9d1d9;">${setup.reasoning || ''}</p>
+                                            <div style="font-size: 0.85rem; color: #8b949e; border-top: 1px solid #30363d; padding-top: 0.5rem; margin-top: 0.5rem;">
+                                                <strong>Entry:</strong> ${setup.entry.type} @ ${setup.entry.price}<br>
+                                                <strong>Stop:</strong> ${setup.stop_loss.price}<br>
+                                                <strong>Targets:</strong> ${setup.targets.map(t => t.price).join(', ')}
+                                            </div>
+                                        </div>`;
+                                });
+                                output.innerHTML = html || '<div style="text-align: center; color: #8b949e;">No setups found.</div>';
+                            } else {
+                                // Fallback to YAML for readability
+                                output.innerHTML = '<pre style="font-family: Consolas; color: #e6edf3;">' + jsonToYaml(parsed) + '</pre>';
+                            }
+                        } catch (e) {
+                            output.innerHTML = marked.parse(data.result);
+                        }
+                    } else if (data.error) {
+                        output.textContent = data.error;
+                        output.style.color = '#f85149';
+                    }
+                    
+                    document.getElementById('last-run').textContent = data.completed_at || '-';
+                    document.getElementById('completed-at').style.display = data.completed_at ? 'inline' : 'none';
+                    
+                    const contextDiv = document.getElementById('inference-context');
+                    if (data.context) {
+                        contextDiv.style.display = 'block';
+                        contextDiv.textContent = data.context.replace('
+', ' | ');
+                    } else {
+                        contextDiv.style.display = 'none';
+                    }
+                });
+                
+            fetch('/api/status').then(r => r.json()).then(data => {
+                const tbody = document.getElementById('setups-body');
+                const setups = data.active_setups || [];
+                if (setups.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #8b949e; padding: 1rem;">No active setups</td></tr>';
+                } else {
+                    tbody.innerHTML = setups.map(s => `
+                        <tr>
+                            <td style="color: #8b949e;">${s.created_at ? s.created_at.substring(11, 19) : '--'}</td>
+                            <td>${s.symbol}</td>
+                            <td style="color: ${s.direction === 'LONG' ? '#3fb950' : '#f85149'}; font-weight: bold;">${s.direction}</td>
+                            <td>${s.entry.price}</td>
+                            <td><span class="status-badge" style="background: rgba(110, 118, 129, 0.2); color: #e6edf3;">${s.status}</span></td>
+                            <td style="color: #8b949e;" title="${s.rules_text}">${s.rules_text.substring(0, 50)}${s.rules_text.length > 50 ? '...' : ''}</td>
+                        </tr>
+                    `).join('');
+                }
+            });
+        }
+        
+        function triggerInference() { fetch('/api/inference', { method: 'POST' }).then(updateStatus); }
+        function setAutoInterval() {
+            const minutes = document.getElementById('input-interval').value;
+            fetch('/api/auto-inference', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ interval: minutes * 60 }) }).then(updateStatus);
+        }
+        
+        window.onload = function() {
+            const savedTab = localStorage.getItem('active_tab') || 'analysis';
+            switchTab(savedTab);
+            updateStatus();
+            setInterval(updateStatus, 2000);
+        };
+    </script>
+</head>
+<body>
+    <div class="header-container">
+        <h1>Trading Daemon</h1>
+        <span id="completed-at" class="meta" style="display: none; font-size: 0.8rem; color: #6e7681;">Last: <span id="last-run"></span></span>
+    </div>
+    
+    <div class="main-container">
+        <div class="card" style="flex-shrink: 0; flex: 0 0 auto;">
+            <div class="controls">
+                <button id="btn-run" onclick="triggerInference()" class="btn-primary">▶ Run</button>
+                <span id="status-badge" class="status-badge idle">IDLE</span>
+                <div class="auto-controls">
+                    <label>Auto:</label>
+                    <input id="input-interval" type="number" value="10" min="0">
+                    <span style="font-size: 0.8rem;">m</span>
+                    <button onclick="setAutoInterval()" class="btn-secondary">Set</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="tab-nav">
+                <button id="btn-analysis" class="tab-btn active" onclick="switchTab('analysis')">Analysis</button>
+                <button id="btn-active" class="tab-btn" onclick="switchTab('active')">Active Setups</button>
+            </div>
+            
+            <div id="tab-analysis" class="tab-content active">
+                <div id="output-content" class="output-content">
+                    <div id="inference-context" style="display: none; background: #21262d; padding: 0.5rem; border-radius: 4px; border: 1px solid #30363d; margin-bottom: 1rem; color: #8b949e; font-size: 0.8rem; white-space: pre-wrap;"></div>
+                    <p style="color: #8b949e; font-style: italic;">Waiting for inference...</p>
+                </div>
+            </div>
+            
+            <div id="tab-active" class="tab-content">
+                <div class="output-content" style="padding: 0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Entry</th>
+                                <th>Status</th>
+                                <th>Rules</th>
+                            </tr>
+                        </thead>
+                        <tbody id="setups-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

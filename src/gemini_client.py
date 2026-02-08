@@ -2,6 +2,7 @@ import subprocess
 import shutil
 import logging
 import os
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -16,8 +17,8 @@ class GeminiClient:
     - .gemini/settings.json: Contains MCP server configuration
     """
     
-    # Use Pro model for trading inference
-    MODEL = "gemini-2.5-pro"
+    # Use latest Pro preview model for trading inference
+    MODEL = "gemini-3-pro-preview"
     
     def __init__(self, user_prompt_path: str):
         """
@@ -54,11 +55,14 @@ class GeminiClient:
         
         return env_vars
 
-    def run_inference(self) -> str:
+    def run_inference(self, context_header: str = "") -> str:
         """
         Calls the Gemini CLI in headless mode with -p parameter.
         Uses Pro model for all inference requests.
         
+        Args:
+            context_header: Optional string to prepend to the user prompt (e.g. current price/time).
+
         The system prompt is read from the GEMINI_SYSTEM_MD environment variable
         (set in .gemini/.env). MCP configuration is picked up from .gemini/settings.json.
         """
@@ -70,6 +74,10 @@ class GeminiClient:
         
         user_prompt = self._read_file(prompt_path)
         
+        # Prepend context if provided
+        if context_header:
+            user_prompt = f"{context_header}\n\n{user_prompt}"
+        
         logger.info(f"User prompt path: {prompt_path}")
         logger.info(f"User prompt content:\n{user_prompt[:500]}...")  # Log first 500 chars
         
@@ -80,7 +88,13 @@ class GeminiClient:
         # Find gemini executable
         gemini_exec = shutil.which("gemini")
         if not gemini_exec:
-            logger.error("Gemini executable not found in PATH")
+            # Fallback to common Windows npm path
+            npm_path = Path(os.environ.get("APPDATA", "")) / "npm" / "gemini.cmd"
+            if npm_path.exists():
+                gemini_exec = str(npm_path)
+        
+        if not gemini_exec:
+            logger.error("Gemini executable not found in PATH or APPDATA/npm")
             return "Error: Gemini executable not found. Please install the Gemini CLI."
 
         # Prepare environment - load .env from .gemini folder
@@ -103,21 +117,51 @@ class GeminiClient:
             ]
             logger.info(f"Command: {cmd[0]} --model {self.MODEL} --yolo -p '<prompt of {len(user_prompt)} chars>'")
             
-            process = subprocess.run(
+            # Use Popen to stream output to console in real-time
+            process = subprocess.Popen(
                 cmd, 
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,  # Capture stderr separately
                 text=True, 
-                capture_output=True,
-                check=True,
                 env=env,
                 encoding='utf-8',
-                cwd=str(self.project_root),  # Run from project directory where .gemini/ is located
+                cwd=str(self.project_root),
+                bufsize=1, # Line buffered
             )
-            logger.info(f"Gemini response:\n{process.stdout}")
-            return process.stdout
             
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Gemini CLI failed: {e.stderr}")
-            return f"Error executing Gemini CLI: {e.stderr}"
+            full_output = []
+            print(f"--- START GEMINI INFERENCE ---")
+            
+            # Create threads to read stdout and stderr concurrently
+            def read_stream(stream, is_stderr):
+                for line in stream:
+                    print(line, end='', flush=True)
+                    if not is_stderr:
+                        full_output.append(line)
+
+            stdout_thread = threading.Thread(target=read_stream, args=(process.stdout, False))
+            stderr_thread = threading.Thread(target=read_stream, args=(process.stderr, True))
+            
+            stdout_thread.start()
+            stderr_thread.start()
+            
+            stdout_thread.join()
+            stderr_thread.join()
+            
+            print(f"\n--- END GEMINI INFERENCE ---")
+            
+            process.wait()
+            result = "".join(full_output)
+            
+            logger.info(f"Gemini response length: {len(result)} chars")
+            
+            if process.returncode != 0:
+                logger.error(f"Gemini CLI failed with code {process.returncode}")
+                # We return the result anyway as it might contain the error message
+                return result if result else f"Error: Gemini CLI failed with code {process.returncode}"
+                
+            return result
+            
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return f"Error: {str(e)}"

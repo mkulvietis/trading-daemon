@@ -1,11 +1,29 @@
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 import threading
 import logging
-from src.state import app_state
+import re
+import json
+from datetime import datetime
+from flask_cors import CORS
+from src.state import app_state, NY_TZ
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
+# Filter out noisy polling logs
+class EndpointFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return not (
+            "GET /api/status" in msg or 
+            "GET /api/inference" in msg or 
+            "GET /api/auto-inference" in msg
+        )
+
+# Apply filter to werkzeug logger
+logging.getLogger("werkzeug").addFilter(EndpointFilter())
 
 # Reference to the GeminiClient, set by main.py
 _gemini_client = None
@@ -19,109 +37,228 @@ HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Trading Daemon</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #0d1117; color: #e6edf3; }
-        h1 { color: #58a6ff; border-bottom: 2px solid #30363d; padding-bottom: 0.5rem; }
-        .card { background: #161b22; padding: 1.5rem; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 1.5rem; }
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; display: flex; flex-direction: column; }
         
-        .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+        .header-container { padding: 0.75rem 1rem; border-bottom: 1px solid #30363d; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; }
+        h1 { color: #58a6ff; margin: 0; font-size: 1.25rem; }
         
-        .status-badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: 600; font-size: 0.85rem; }
+        .main-container { flex: 1; min-height: 0; padding: 0.5rem; display: flex; flex-direction: column; }
+        .card { background: #161b22; border-radius: 8px; border: 1px solid #30363d; display: flex; flex-direction: column; flex: 1; min-height: 0; margin-bottom: 0.5rem; }
+        
+        .controls { padding: 0.75rem 1rem; border-bottom: 1px solid #30363d; flex-shrink: 0; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+        
+        .status-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-weight: 600; font-size: 0.8rem; }
         .running { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
-        .complete { background: rgba(63, 185, 80, 0.2); color: #3fb950; }
-        .error { background: rgba(248, 81, 73, 0.2); color: #f85149; }
         .idle { background: rgba(110, 118, 129, 0.2); color: #8b949e; }
         
-        .output-container { background: #0d1117; border-radius: 4px; border: 1px solid #30363d; margin-top: 1rem; }
-        .output-header { background: #21262d; padding: 0.5rem 1rem; font-size: 0.85rem; color: #8b949e; display: flex; justify-content: space-between; }
-        .output-content { padding: 1rem; white-space: pre-wrap; font-family: Consolas, monospace; font-size: 0.9rem; max-height: 400px; overflow-y: auto; color: #8b949e; }
+        /* Tabs */
+        .tab-nav { display: flex; background: #21262d; border-bottom: 1px solid #30363d; }
+        .tab-btn { background: transparent; border: none; color: #8b949e; padding: 0.75rem 1rem; cursor: pointer; font-weight: 600; border-bottom: 2px solid transparent; }
+        .tab-btn:hover { color: #e6edf3; }
+        .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
         
-        button { padding: 0.5rem 1rem; cursor: pointer; border: none; border-radius: 4px; font-weight: 600; }
-        button:hover { opacity: 0.9; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-primary { background: linear-gradient(135deg, #58a6ff, #a371f7); color: white; }
-        .btn-secondary { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+        .tab-content { display: none; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+        .tab-content.active { display: flex; }
+
+        .output-content { flex: 1; padding: 1rem; overflow-y: auto; font-size: 0.85rem; color: #e6edf3; }
         
-        input[type="number"] { padding: 0.4rem; border: 1px solid #30363d; border-radius: 4px; width: 70px; background: #0d1117; color: #e6edf3; }
-        label { font-size: 0.9rem; color: #8b949e; margin-right: 0.5rem; }
-        .meta { font-size: 0.85rem; color: #6e7681; }
+        /* Button Styles */
+        button { padding: 0.5rem 0.9rem; cursor: pointer; border: none; border-radius: 4px; font-weight: 600; font-size: 0.85rem; }
+        .btn-primary { background: #1f6feb; color: white; }
+        .btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+        input[type="number"] { padding: 0.4rem; border: 1px solid #30363d; border-radius: 4px; width: 55px; background: #0d1117; color: #e6edf3; }
+        
+        .auto-controls { display: flex; align-items: center; gap: 0.5rem; border-left: 1px solid #30363d; padding-left: 0.75rem; margin-left: 0.25rem; }
+        
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th, td { border-bottom: 1px solid #30363d; padding: 0.5rem; text-align: left; }
+        th { color: #8b949e; position: sticky; top: 0; background: #161b22; }
     </style>
     <script>
+        function switchTab(id) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('btn-' + id).classList.add('active');
+            document.getElementById('tab-' + id).classList.add('active');
+            localStorage.setItem('active_tab', id);
+        }
+
+        // jsonToYaml removed - using JSON.stringify
+
+
         function updateStatus() {
             fetch('/api/inference')
                 .then(r => r.json())
                 .then(data => {
-                    const status = data.status;
-                    const badge = document.getElementById('status-badge');
-                    badge.textContent = status.toUpperCase();
-                    badge.className = 'status-badge ' + status;
+                    document.getElementById('status-badge').className = 'status-badge ' + data.status;
+                    document.getElementById('status-badge').textContent = data.status.toUpperCase();
                     
                     const btn = document.getElementById('btn-run');
-                    btn.disabled = status === 'running';
-                    btn.textContent = status === 'running' ? '⟳ Running...' : '▶ Run Inference';
+                    btn.disabled = data.status === 'running';
+                    btn.textContent = data.status === 'running' ? '⟳ Running...' : '▶ Run';
                     
                     const output = document.getElementById('output-content');
                     if (data.result) {
-                        output.textContent = data.result;
-                        output.style.color = '#e6edf3';
+                        try {
+                            const cleanJson = data.result.replaceAll('\\u0060' + '\\u0060' + '\\u0060json', '').replaceAll('\\u0060' + '\\u0060' + '\\u0060', '').trim();
+                            const parsed = JSON.parse(cleanJson);
+                            
+                            if (parsed.setups && Array.isArray(parsed.setups)) {
+                                let html = '';
+                                parsed.setups.forEach(setup => {
+                                    const color = setup.direction === 'LONG' ? '#3fb950' : '#f85149';
+                                    html += `
+                                        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                                <h3 style="margin: 0; color: ${color};">${setup.direction} ${setup.symbol}</h3>
+                                                <span class="status-badge" style="background: rgba(110, 118, 129, 0.2); color: #8b949e;">${setup.status || 'NEW'}</span>
+                                            </div>
+                                            <p style="margin: 0.5rem 0; color: #c9d1d9;">${setup.reasoning || ''}</p>
+                                            <div style="font-size: 0.85rem; color: #8b949e; border-top: 1px solid #30363d; padding-top: 0.5rem; margin-top: 0.5rem;">
+                                                <strong>Entry:</strong> ${setup.entry.type} @ ${setup.entry.price}<br>
+                                                <strong>Stop:</strong> ${setup.stop_loss.price}<br>
+                                                <strong>Targets:</strong> ${setup.targets.map(t => t.price).join(', ')}
+                                            </div>
+                                        </div>`;
+                                });
+                                output.innerHTML = html || '<div style="text-align: center; color: #8b949e;">No setups found.</div>';
+                            } else {
+                                // Fallback to JSON for readability
+                                output.innerHTML = '<pre style="font-family: Consolas; color: #e6edf3;">' + JSON.stringify(parsed, null, 2) + '</pre>';
+                            }
+                        } catch (e) {
+                            output.innerHTML = marked.parse(data.result);
+                        }
                     } else if (data.error) {
                         output.textContent = data.error;
                         output.style.color = '#f85149';
                     }
                     
-                    document.getElementById('last-run').textContent = data.completed_at || 'Never';
+                    document.getElementById('last-run').textContent = data.completed_at || '-';
                     document.getElementById('completed-at').style.display = data.completed_at ? 'inline' : 'none';
+                    
+                    const contextDiv = document.getElementById('inference-context');
+                    if (data.context) {
+                        contextDiv.style.display = 'block';
+                        contextDiv.textContent = data.context;
+                    } else {
+                        contextDiv.style.display = 'none';
+                    }
                 });
+                
+            fetch('/api/status').then(r => r.json()).then(data => {
+                const tbody = document.getElementById('setups-body');
+                const setups = data.active_setups || [];
+                if (setups.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #8b949e; padding: 1rem;">No active setups</td></tr>';
+                } else {
+                    tbody.innerHTML = setups.map(s => `
+                        <tr>
+                            <td style="color: #8b949e;">${s.created_at ? s.created_at.substring(11, 19) : '--'}</td>
+                            <td>${s.symbol}</td>
+                            <td style="color: ${s.direction === 'LONG' ? '#3fb950' : '#f85149'}; font-weight: bold;">${s.direction}</td>
+                            <td>${s.entry.price}</td>
+                            <td><span class="status-badge" style="background: rgba(110, 118, 129, 0.2); color: #e6edf3;">${s.status}</span></td>
+                            <td style="color: #8b949e;" title="${s.rules_text}">${s.rules_text.substring(0, 50)}${s.rules_text.length > 50 ? '...' : ''}</td>
+                        </tr>
+                    `).join('');
+                }
+            });
+        }
+        
+        function triggerInference() { 
+            const btn = document.getElementById('btn-run');
+            btn.textContent = 'Starting...';
+            btn.disabled = true;
             
-            fetch('/api/auto-inference')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('current-interval').textContent = data.interval > 0 ? (data.interval / 60) + ' min' : 'Off';
+            console.log('Triggering inference...');
+            fetch('/api/inference', { method: 'POST' })
+                .then(r => {
+                    console.log('Inference triggered, status:', r.status);
+                    if (!r.ok) return r.text().then(t => { throw new Error(t) });
+                    return r;
+                })
+                .then(updateStatus)
+                .catch(e => {
+                    console.error('Trigger error:', e);
+                    alert('Failed to trigger inference: ' + e.message);
+                    btn.textContent = '▶ Run';
+                    btn.disabled = false;
                 });
         }
-        
-        function triggerInference() {
-            fetch('/api/inference', { method: 'POST' }).then(updateStatus);
-        }
-        
         function setAutoInterval() {
             const minutes = document.getElementById('input-interval').value;
-            fetch('/api/auto-inference', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ interval: minutes * 60 })
+            fetch('/api/auto-inference', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ interval: minutes * 60 }) 
             }).then(updateStatus);
         }
         
-        setInterval(updateStatus, 5000);
-        window.onload = updateStatus;
+        window.onload = function() {
+            const savedTab = localStorage.getItem('active_tab') || 'analysis';
+            switchTab(savedTab);
+            updateStatus();
+            setInterval(updateStatus, 2000);
+        };
     </script>
 </head>
 <body>
-    <h1>Trading Daemon</h1>
+    <div class="header-container">
+        <h1>Trading Daemon</h1>
+        <span id="completed-at" class="meta" style="display: none; font-size: 0.8rem; color: #6e7681;">Last: <span id="last-run"></span></span>
+    </div>
     
-    <div class="card">
-        <div class="controls">
-            <button id="btn-run" onclick="triggerInference()" class="btn-primary">▶ Run Inference</button>
-            <span id="status-badge" class="status-badge idle">IDLE</span>
-            <span id="completed-at" class="meta" style="display: none;">Completed at: <span id="last-run"></span></span>
-            
-            <span style="border-left: 1px solid #30363d; padding-left: 1rem; margin-left: 0.5rem;">
-                <label>Auto:</label>
-                <input id="input-interval" type="number" value="10" min="0">
-                <span class="meta">min</span>
-                <button onclick="setAutoInterval()" class="btn-secondary">Set</button>
-                <span class="meta">(Current: <span id="current-interval">-</span>)</span>
-            </span>
+    <div class="main-container">
+        <div class="card" style="flex-shrink: 0; flex: 0 0 auto;">
+            <div class="controls">
+                <button id="btn-run" onclick="triggerInference()" class="btn-primary">▶ Run</button>
+                <span id="status-badge" class="status-badge idle">IDLE</span>
+                <div class="auto-controls">
+                    <label>Auto:</label>
+                    <input id="input-interval" type="number" value="10" min="0">
+                    <span style="font-size: 0.8rem;">m</span>
+                    <button onclick="setAutoInterval()" class="btn-secondary">Set</button>
+                </div>
+            </div>
         </div>
         
-        <div class="output-container">
-            <div class="output-header">
-                <span>Output</span>
-                <span>GEMINI 2.5 PRO</span>
+        <div class="card">
+            <div class="tab-nav">
+                <button id="btn-analysis" class="tab-btn active" onclick="switchTab('analysis')">Analysis</button>
+                <button id="btn-active" class="tab-btn" onclick="switchTab('active')">Active Setups</button>
             </div>
-            <div id="output-content" class="output-content">// Waiting for inference...</div>
+            
+            <div id="tab-analysis" class="tab-content active">
+                <div id="output-content" class="output-content">
+                    <div id="inference-context" style="display: none; background: #21262d; padding: 0.5rem; border-radius: 4px; border: 1px solid #30363d; margin-bottom: 1rem; color: #8b949e; font-size: 0.8rem; white-space: pre-wrap;"></div>
+                    <p style="color: #8b949e; font-style: italic;">Waiting for inference...</p>
+                </div>
+            </div>
+            
+            <div id="tab-active" class="tab-content">
+                <div class="output-content" style="padding: 0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Entry</th>
+                                <th>Status</th>
+                                <th>Rules</th>
+                            </tr>
+                        </thead>
+                        <tbody id="setups-body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 </body>
@@ -131,7 +268,7 @@ HTML_TEMPLATE = """
 
 @app.route("/")
 def index():
-    return render_template_string(HTML_TEMPLATE, state=app_state.get_snapshot())
+    return HTML_TEMPLATE
 
 @app.route("/api/status")
 def status_api():
@@ -144,7 +281,6 @@ def control():
         app_state.set_running(True)
     elif action == "stop":
         app_state.set_running(False)
-    # Redirect back to index to re-render template with new state (though JS would catch up too)
     return redirect(url_for("index"))
 
 @app.route("/config", methods=["POST"])
@@ -162,56 +298,71 @@ def config():
 
 @app.route("/api/inference", methods=["GET"])
 def get_inference():
-    """
-    Poll for inference status and result.
-    
-    Returns:
-        - status: "none" | "running" | "complete" | "error"
-        - result: inference result (if complete)
-        - error: error message (if error)
-        - started_at: when inference started
-        - completed_at: when inference completed
-    """
     return jsonify(app_state.get_inference_snapshot())
 
 
 @app.route("/api/inference", methods=["POST"])
 def trigger_inference():
-    """
-    Trigger a new inference request.
-    
-    Returns 409 if inference is already running.
-    Returns 503 if GeminiClient is not configured.
-    """
+    logger.info("Received manual inference request")
     if app_state.is_inference_running():
         return jsonify({"error": "Inference already in progress"}), 409
     
     if _gemini_client is None:
         return jsonify({"error": "GeminiClient not configured"}), 503
     
-    # Start inference in background thread
     def run_inference_async():
+        logger.info("DEBUG: Entered run_inference_async")
         try:
-            app_state.start_inference()
-            logger.info("Starting inference...")
-            result = _gemini_client.run_inference()
+            # Construct context header
+            now = datetime.now(NY_TZ)
+            time_str = now.strftime("%H:%M")
+            price_str = f"{app_state.last_price:.2f}" if app_state.last_price else "Unknown"
+            context = f"Current Market Time: {time_str}\nCurrent Price: {price_str}"
             
-            # Check for various error patterns (CLI may exit 0 with error in stdout)
-            error_patterns = [
-                "Error",
-                "critical error",
-                "ModelNotFoundError",
-                "fetch failed",
-                "Exception",
-            ]
+            app_state.start_inference(context=context)
+            logger.info(f"Starting inference with context: {context.replace('\\n', ', ')}")
+            logger.info("DEBUG: Calling _gemini_client.run_inference now...")
+            result = _gemini_client.run_inference(context_header=context)
+            logger.info("DEBUG: _gemini_client.run_inference returned")
+            
+            error_patterns = ["Error", "critical error", "ModelNotFoundError", "fetch failed", "Exception"]
             is_error = any(pattern in result for pattern in error_patterns)
             
             if is_error:
                 app_state.fail_inference(result)
-                logger.error(f"Inference failed: {result[:500]}...")
+                logger.error(f"Inference failed (detected error keywords): {result[:500]}...")
             else:
-                app_state.complete_inference(result)
-                app_state.update_output(result)  # Also update main output
+                # Log the full raw result for debugging
+                logger.info(f"Raw Gemini response:\n{result}")
+
+                # Robust JSON extraction
+                clean_json = ""
+                json_match = re.search(r"```json\s*(.*?)```", result, re.DOTALL)
+                if json_match:
+                    clean_json = json_match.group(1).strip()
+                else:
+                    # Fallback: try to find start/end braces
+                    start = result.find('{')
+                    end = result.rfind('}') + 1
+                    if start != -1 and end != -1:
+                        clean_json = result[start:end]
+                    else:
+                        clean_json = result.replace("```json", "").replace("```", "").strip()
+
+                # Use cleaned JSON for frontend display if possible
+                display_result = clean_json if clean_json else result
+                app_state.complete_inference(display_result)
+                app_state.update_output(display_result)
+
+                try:
+                    from src.models import LLMResponse
+                    data = json.loads(clean_json)
+                    response = LLMResponse(**data)
+                    app_state.trade_manager.add_setups(response.setups)
+                except Exception as parse_err:
+                     logger.error(f"Failed to parse manual inference JSON: {parse_err}")
+                     logger.debug(f"Attempted to parse: {clean_json if 'clean_json' in locals() else 'N/A'}")
+
                 logger.info("Inference completed successfully")
         except Exception as e:
             error_msg = str(e)
@@ -226,12 +377,6 @@ def trigger_inference():
 
 @app.route("/api/auto-inference", methods=["GET"])
 def get_auto_inference():
-    """
-    Get automatic inference interval setting.
-    
-    Returns:
-        - interval: seconds between automatic inferences (0 = disabled)
-    """
     return jsonify({
         "interval": app_state.get_auto_inference_interval()
     })
@@ -239,14 +384,6 @@ def get_auto_inference():
 
 @app.route("/api/auto-inference", methods=["POST"])
 def set_auto_inference():
-    """
-    Set automatic inference interval.
-    
-    Body (JSON):
-        - interval: seconds between automatic inferences (0 = disable)
-    
-    Returns the new interval setting.
-    """
     data = request.get_json() or {}
     try:
         interval = int(data.get("interval", 0))
