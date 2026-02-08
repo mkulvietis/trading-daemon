@@ -328,11 +328,11 @@ HTML_TEMPLATE = """
                     <table id="setups-table">
                         <thead>
                             <tr>
-                                <th>Time</th>
-                                <th>Symbol</th>
-                                <th>Side</th>
-                                <th>Entry</th>
-                                <th>Status</th>
+                                <th style="width: 50px;">Time</th>
+                                <th style="width: 60px;">Symbol</th>
+                                <th style="width: 50px;">Side</th>
+                                <th style="width: 60px;">Entry</th>
+                                <th style="width: 100px;">Status</th>
                                 <th>Rules</th>
                             </tr>
                         </thead>
