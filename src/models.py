@@ -40,4 +40,7 @@ class TradeSetup(BaseModel):
     reasoning: Optional[str] = None
 
 class LLMResponse(BaseModel):
+    inference_time: Optional[str] = Field(None, description="Market time when inference was run")
+    inference_price: Optional[float] = Field(None, description="Price when inference was run")
+    market_overview: Optional[str] = Field(None, description="Brief summary of current market conditions")
     setups: List[TradeSetup]

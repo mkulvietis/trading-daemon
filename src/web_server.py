@@ -76,9 +76,11 @@ HTML_TEMPLATE = """
         
         .auto-controls { display: flex; align-items: center; gap: 0.5rem; border-left: 1px solid #30363d; padding-left: 0.75rem; margin-left: 0.25rem; }
         
-        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-        th, td { border-bottom: 1px solid #30363d; padding: 0.5rem; text-align: left; }
-        th { color: #8b949e; position: sticky; top: 0; background: #161b22; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; table-layout: fixed; }
+        th, td { border-bottom: 1px solid #30363d; padding: 0.5rem; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+        th { color: #8b949e; position: sticky; top: 0; background: #161b22; position: relative; }
+        th .resizer { position: absolute; right: 0; top: 0; height: 100%; width: 5px; cursor: col-resize; background: transparent; }
+        th .resizer:hover, th .resizer.resizing { background: #58a6ff; }
     </style>
     <script>
         function switchTab(id) {
@@ -111,6 +113,23 @@ HTML_TEMPLATE = """
                             
                             if (parsed.setups && Array.isArray(parsed.setups)) {
                                 let html = '';
+                                
+                                // Display inference time and price if present
+                                if (parsed.inference_time || parsed.inference_price) {
+                                    html += '<div style="font-size: 0.8rem; color: #8b949e; margin-bottom: 0.75rem; display: flex; gap: 1rem;">';
+                                    if (parsed.inference_time) html += '<span>⏱️ ' + parsed.inference_time + '</span>';
+                                    if (parsed.inference_price) html += '<span>💰 ' + parsed.inference_price + '</span>';
+                                    html += '</div>';
+                                }
+                                
+                                // Display market overview if present
+                                if (parsed.market_overview) {
+                                    html += '<div style="background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">';
+                                    html += '<div style="font-size: 0.75rem; color: #8b949e; margin-bottom: 0.25rem;">MARKET OVERVIEW</div>';
+                                    html += '<div style="color: #c9d1d9;">' + parsed.market_overview + '</div>';
+                                    html += '</div>';
+                                }
+                                
                                 parsed.setups.forEach(setup => {
                                     const color = setup.direction === 'LONG' ? '#3fb950' : '#f85149';
                                     html += `
@@ -127,7 +146,17 @@ HTML_TEMPLATE = """
                                             </div>
                                         </div>`;
                                 });
-                                output.innerHTML = html || '<div style="text-align: center; color: #8b949e;">No setups found.</div>';
+                                
+                                // If no setups, show a helpful message
+                                if (parsed.setups.length === 0) {
+                                    html += '<div style="text-align: center; padding: 1.5rem; color: #8b949e; background: #161b22; border: 1px solid #30363d; border-radius: 6px;">';
+                                    html += '<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⏸️</div>';
+                                    html += '<div style="font-weight: 600; color: #c9d1d9; margin-bottom: 0.25rem;">No Trade Setups</div>';
+                                    html += '<div style="font-size: 0.85rem;">AI found no high-probability entries at this time.</div>';
+                                    html += '</div>';
+                                }
+                                
+                                output.innerHTML = html;
                             } else {
                                 // Fallback to JSON for readability
                                 output.innerHTML = '<pre style="font-family: Consolas; color: #e6edf3;">' + JSON.stringify(parsed, null, 2) + '</pre>';
@@ -142,14 +171,6 @@ HTML_TEMPLATE = """
                     
                     document.getElementById('last-run').textContent = data.completed_at || '-';
                     document.getElementById('completed-at').style.display = data.completed_at ? 'inline' : 'none';
-                    
-                    const contextDiv = document.getElementById('inference-context');
-                    if (data.context) {
-                        contextDiv.style.display = 'block';
-                        contextDiv.textContent = data.context;
-                    } else {
-                        contextDiv.style.display = 'none';
-                    }
                 });
                 
             fetch('/api/status').then(r => r.json()).then(data => {
@@ -158,16 +179,25 @@ HTML_TEMPLATE = """
                 if (setups.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #8b949e; padding: 1rem;">No active setups</td></tr>';
                 } else {
-                    tbody.innerHTML = setups.map(s => `
+                    tbody.innerHTML = setups.map(s => {
+                        let timeStr = '--';
+                        if (s.created_at) {
+                            // Extract HH:MM directly from the stored datetime string (already local time)
+                            const match = s.created_at.match(/(\\d{2}):(\\d{2})/);
+                            if (match) {
+                                timeStr = match[0];
+                            }
+                        }
+                        return `
                         <tr>
-                            <td style="color: #8b949e;">${s.created_at ? s.created_at.substring(11, 19) : '--'}</td>
+                            <td style="color: #8b949e;">${timeStr}</td>
                             <td>${s.symbol}</td>
                             <td style="color: ${s.direction === 'LONG' ? '#3fb950' : '#f85149'}; font-weight: bold;">${s.direction}</td>
                             <td>${s.entry.price}</td>
                             <td><span class="status-badge" style="background: rgba(110, 118, 129, 0.2); color: #e6edf3;">${s.status}</span></td>
-                            <td style="color: #8b949e;" title="${s.rules_text}">${s.rules_text.substring(0, 50)}${s.rules_text.length > 50 ? '...' : ''}</td>
+                            <td style="color: #8b949e; white-space: nowrap;" title="${s.rules_text}">${s.rules_text}</td>
                         </tr>
-                    `).join('');
+                    `; }).join('');
                 }
             });
         }
@@ -206,7 +236,59 @@ HTML_TEMPLATE = """
             switchTab(savedTab);
             updateStatus();
             setInterval(updateStatus, 2000);
+            initColumnResize();
         };
+        
+        function initColumnResize() {
+            const table = document.getElementById('setups-table');
+            if (!table) return;
+            
+            const headers = table.querySelectorAll('th');
+            const colWidths = JSON.parse(localStorage.getItem('setupColumnWidths') || '{}');
+            
+            headers.forEach((th, index) => {
+                // Restore saved width
+                if (colWidths[index]) {
+                    th.style.width = colWidths[index] + 'px';
+                }
+                
+                // Add resizer div
+                const resizer = document.createElement('div');
+                resizer.className = 'resizer';
+                th.appendChild(resizer);
+                
+                let startX, startWidth;
+                
+                resizer.addEventListener('mousedown', function(e) {
+                    startX = e.pageX;
+                    startWidth = th.offsetWidth;
+                    resizer.classList.add('resizing');
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                    e.preventDefault();
+                });
+                
+                function onMouseMove(e) {
+                    const newWidth = startWidth + (e.pageX - startX);
+                    if (newWidth > 30) {
+                        th.style.width = newWidth + 'px';
+                    }
+                }
+                
+                function onMouseUp() {
+                    resizer.classList.remove('resizing');
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    
+                    // Save all column widths
+                    const widths = {};
+                    headers.forEach((h, i) => {
+                        widths[i] = h.offsetWidth;
+                    });
+                    localStorage.setItem('setupColumnWidths', JSON.stringify(widths));
+                }
+            });
+        }
     </script>
 </head>
 <body>
@@ -237,14 +319,13 @@ HTML_TEMPLATE = """
             
             <div id="tab-analysis" class="tab-content active">
                 <div id="output-content" class="output-content">
-                    <div id="inference-context" style="display: none; background: #21262d; padding: 0.5rem; border-radius: 4px; border: 1px solid #30363d; margin-bottom: 1rem; color: #8b949e; font-size: 0.8rem; white-space: pre-wrap;"></div>
                     <p style="color: #8b949e; font-style: italic;">Waiting for inference...</p>
                 </div>
             </div>
             
             <div id="tab-active" class="tab-content">
                 <div class="output-content" style="padding: 0;">
-                    <table>
+                    <table id="setups-table">
                         <thead>
                             <tr>
                                 <th>Time</th>
@@ -314,10 +395,10 @@ def trigger_inference():
         logger.info("DEBUG: Entered run_inference_async")
         try:
             # Construct context header
-            now = datetime.now(NY_TZ)
+            now = datetime.now()
             time_str = now.strftime("%H:%M")
             price_str = f"{app_state.last_price:.2f}" if app_state.last_price else "Unknown"
-            context = f"Current Market Time: {time_str}\nCurrent Price: {price_str}"
+            context = f"Current Time: {time_str}\nCurrent Price: {price_str}"
             
             app_state.start_inference(context=context)
             logger.info(f"Starting inference with context: {context.replace('\\n', ', ')}")

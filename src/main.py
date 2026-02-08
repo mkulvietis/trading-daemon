@@ -105,10 +105,10 @@ def job_auto_inference(client: GeminiClient):
     # For now, let's keep it simple: if not running, trigger it
     
     logger.info("Triggering auto-inference...")
-    now = datetime.now(NY_TZ)
+    now = datetime.now()
     time_str = now.strftime("%H:%M")
     price_str = f"{app_state.last_price:.2f}" if app_state.last_price else "Unknown"
-    context = f"Current Market Time: {time_str}\nCurrent Price: {price_str}"
+    context = f"Current Time: {time_str}\nCurrent Price: {price_str}"
 
     app_state.start_inference(context=context)
 
