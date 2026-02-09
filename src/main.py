@@ -182,7 +182,8 @@ def daemon_loop(client: GeminiClient):
             # For responsiveness, let's just fetch every loop but with a small check? 
             # Or better, just fetch every 5 seconds.
             
-            if app_state.is_running and int(current_time) % 5 == 0:
+            # Check price and update setups every second
+            if app_state.is_running:
                 price = fetch_current_price()
                 if price > 0:
                      app_state.last_price = price
@@ -190,7 +191,7 @@ def daemon_loop(client: GeminiClient):
                      # Also prune old
                      app_state.trade_manager.prune_backlog()
 
-            # Sleep a bit to avoid CPU spin, but respond quickly to stop/config
+            # Sleep a bit to avoid CPU spin
             time.sleep(1)
                 
         except Exception as e:

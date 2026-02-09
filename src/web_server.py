@@ -235,7 +235,7 @@ HTML_TEMPLATE = """
             const savedTab = localStorage.getItem('active_tab') || 'analysis';
             switchTab(savedTab);
             updateStatus();
-            setInterval(updateStatus, 2000);
+            setInterval(updateStatus, 1000);
             initColumnResize();
         };
         

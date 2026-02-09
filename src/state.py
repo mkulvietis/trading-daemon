@@ -104,7 +104,8 @@ class DaemonState:
                 "error": self.inference.error,
                 "started_at": self.inference.started_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.started_at else None,
                 "completed_at": self.inference.completed_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.completed_at else None,
-                "context": self.inference.context
+                "context": self.inference.context,
+                "active_setups": [s.model_dump() for s in self.trade_manager.get_active_setups()]
             }
 
     def is_inference_running(self) -> bool:
