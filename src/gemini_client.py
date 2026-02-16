@@ -55,22 +55,26 @@ class GeminiClient:
         
         return env_vars
 
-    def run_inference(self, context_header: str = "") -> str:
+    def run_inference(self, context_header: str = "", prompt_path: Path = None) -> str:
         """
         Calls the Gemini CLI in headless mode with -p parameter.
         Uses Pro model for all inference requests.
         
         Args:
-            context_header: Optional string to prepend to the user prompt (e.g. current price/time).
+            context_header: Optional text derived from logic (e.g. current time/price) 
+                          to prepend to the user prompt.
+            prompt_path: Optional path to override the default user prompt file.
 
         The system prompt is read from the GEMINI_SYSTEM_MD environment variable
         (set in .gemini/.env). MCP configuration is picked up from .gemini/settings.json.
         """
+        # Determine effective prompt path
+        effective_prompt_path = Path(prompt_path) if prompt_path else self.user_prompt_path
         # Resolve user prompt path relative to project root
-        if self.user_prompt_path.is_absolute():
-            prompt_path = self.user_prompt_path
+        if effective_prompt_path.is_absolute():
+            prompt_path = effective_prompt_path
         else:
-            prompt_path = self.project_root / self.user_prompt_path
+            prompt_path = self.project_root / effective_prompt_path
         
         user_prompt = self._read_file(prompt_path)
         
@@ -131,6 +135,7 @@ class GeminiClient:
             
             full_output = []
             print(f"--- START GEMINI INFERENCE ---")
+            print(f"Using prompt file: {prompt_path.name}")
             
             # Create threads to read stdout and stderr concurrently
             def read_stream(stream, is_stderr):

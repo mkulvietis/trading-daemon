@@ -1,19 +1,20 @@
-Analyze the ES futures market using the `get_market_data` tool.
+Analyze the ES futures market using the `get_market_state` tool.
 
-I'm looking for the **highest probability trade setup** for a 5-30 minute hold.
+I'm looking for an **ALTERNATIVE trade setup** for a 5-30 minute hold. 
+This strategy should focus on **mean reversion** or **counter-trend** opportunities at key levels, or perhaps a **scalp** on lower timeframes if the main trend is overextended.
 
 Key questions to answer:
-1. What is the current trend on multiple timeframes?
-2. Where are the nearest significant support and resistance levels?
-3. Is price at or approaching a high-probability entry zone?
-4. What confluence factors support a trade? (VWAP, EMAs, pivots, patterns, volume, other)
-5. What would be a logical stop loss and target?
-6. Think like professional intraday trader and make a decision based on rationality.
+1. **TRENDLINES ARE YOUR PRIMARY SIGNAL.** Check all trendlines. A resistance trendline with `proximity: "at"` or `"near"` where price shows rejection = potential short. A support trendline breaking down = potential short continuation. Focus on trendlines with high `touch_count` and `score`.
+2. Is the current trend overextended? (RSI, Bollinger Bands, distance from VWAP)
+3. Are there any immediate rejection candles at key trendlines or pivot levels?
+4. What is the **contrarian** view?
+
+**Provide a confidence score (1-10) based on technical confluence.**
 
 **Guidelines:**
-- Only recommend a trade if there's strong confluence (2-3+ factors aligning)
-- If no clear setup exists right now, tell me what to watch for
-- I prefer to trade WITH the trend, but will take counter-trend trades at key levels with strong rejection
-- I'm patient - I'd rather wait for a good entry than chase
+- **Trendline proximity is the highest-weight factor** — a reversal at a tested trendline (proximity "at" or "near") with 3+ touches gets +3 confidence points automatically
+- Be more aggressive than the main trend-following strategy if conditions warrant a reversal.
+- Use tight stops.
+- If no alternative setup exists, state "No valid alternative setup". 
 
-Call `get_market_data` with ticker '@ES' and timeframes [1, 5, 30, 120].
+Call `get_market_state`.

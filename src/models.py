@@ -2,6 +2,9 @@ from enum import Enum
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
+import pytz
+
+NY_TZ = pytz.timezone('America/New_York')
 
 class TradeStatus(str, Enum):
     MONITORING = "MONITORING"
@@ -30,7 +33,7 @@ class TradeSetup(BaseModel):
     symbol: str = "@ES"
     direction: Literal["LONG", "SHORT"]
     status: TradeStatus = TradeStatus.NEW
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(NY_TZ))
     
     entry: EntryRule
     stop_loss: StopLossRule

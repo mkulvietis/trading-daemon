@@ -3,6 +3,9 @@ import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from .models import TradeSetup, TradeStatus
+import pytz
+
+NY_TZ = pytz.timezone('America/New_York')
 
 logger = logging.getLogger("TradeManager")
 
@@ -36,23 +39,19 @@ class TradeManager:
             return sorted(self.setups.values(), key=lambda x: x.created_at, reverse=True)
 
     def prune_backlog(self, max_age_minutes: int = 30):
-        """Removes setups older than max_age_minutes, UNLESS they are active trades."""
+        """Removes all setups older than max_age_minutes regardless of status."""
         with self._lock:
-            now = datetime.now()
+            now = datetime.now(NY_TZ)
             ids_to_remove = []
             for start_id, setup in self.setups.items():
                 age = now - setup.created_at
-                
-                # Keep active trades regardless of age
-                if setup.status in [TradeStatus.TRADING, TradeStatus.PROFIT, TradeStatus.STOP_LOSS]:
-                    continue
                 
                 if age > timedelta(minutes=max_age_minutes):
                     ids_to_remove.append(start_id)
             
             for i in ids_to_remove:
                 del self.setups[i]
-                logger.debug(f"Pruned stale setup: {i}")
+                logger.info(f"Pruned old setup ({i}): age > {max_age_minutes}m")
 
     def update_setups(self, current_price: float):
         """

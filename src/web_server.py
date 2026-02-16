@@ -95,18 +95,41 @@ HTML_TEMPLATE = """
 
 
         function updateStatus() {
-            fetch('/api/inference')
+            fetch('/api/inference?t=' + Date.now())
                 .then(r => r.json())
                 .then(data => {
                     document.getElementById('status-badge').className = 'status-badge ' + data.status;
                     document.getElementById('status-badge').textContent = data.status.toUpperCase();
                     
-                    const btn = document.getElementById('btn-run');
-                    btn.disabled = data.status === 'running';
-                    btn.textContent = data.status === 'running' ? '⟳ Running...' : '▶ Run';
+                    const isRunning = data.status === 'running';
+                    const activeStrategy = data.strategy; // 'main' or 'alt' or null
                     
+                    const btnRun = document.getElementById('btn-run');
+                    if (btnRun) {
+                        btnRun.disabled = isRunning;
+                        if (isRunning && activeStrategy === 'main') {
+                            btnRun.textContent = '⟳ Running...';
+                        } else {
+                            btnRun.textContent = '▶ Run';
+                        }
+                    }
+                    
+                    const btnAlt = document.getElementById('btn-run-alt');
+                    if (btnAlt) {
+                        btnAlt.disabled = isRunning;
+                        if (isRunning && activeStrategy === 'alt') {
+                            btnAlt.textContent = '⟳ Running...';
+                        } else {
+                            btnAlt.textContent = '⚡ Run Alt';
+                        }
+                    }
+
                     const output = document.getElementById('output-content');
-                    if (data.result) {
+                    
+                    // Show analyzing state if running and we don't have a result yet (or if we want to overwrite old result)
+                    if (isRunning) {
+                         output.innerHTML = '<div style="padding: 2rem; text-align: center; color: #8b949e;"><div style="font-size: 2rem; margin-bottom: 1rem;">🧠</div><div>AI is analyzing market structure...</div><div style="font-size: 0.8rem; margin-top: 0.5rem;">Strategy: ' + (activeStrategy || 'Main').toUpperCase() + '</div></div>';
+                    } else if (data.result) {
                         try {
                             const cleanJson = data.result.replaceAll('\\u0060' + '\\u0060' + '\\u0060json', '').replaceAll('\\u0060' + '\\u0060' + '\\u0060', '').trim();
                             const parsed = JSON.parse(cleanJson);
@@ -169,46 +192,61 @@ HTML_TEMPLATE = """
                         output.style.color = '#f85149';
                     }
                     
+                    // Update active setups table
+                    const setups = data.active_setups || [];
+                    const tbody = document.getElementById('setups-body');
+                    if (tbody) {
+                        tbody.innerHTML = setups.map(s => {
+                            // Extract HH:MM from created_at string if possible, else use as is
+                            let timeStr = '-';
+                            if (s.created_at) {
+                                try {
+                                    const date = new Date(s.created_at);
+                                    timeStr = date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                                } catch (e) { timeStr = s.created_at; }
+                            }
+
+                            const rules = s.rules_text || '-';
+                            const statusColor = s.status === 'NEW' ? '#2f81f7' : 
+                                              s.status === 'TRIGGERED' ? '#3fb950' : 
+                                              s.status === 'STOPPED' ? '#f85149' : '#8b949e';
+                            
+                            const directionColor = s.direction === 'LONG' ? '#3fb950' : '#f85149';
+                            
+                            return `<tr>
+                                <td>${timeStr}</td>
+                                <td style="color: ${directionColor}">${s.symbol}</td>
+                                <td>${s.direction}</td>
+                                <td>${s.entry.price}</td>
+                                <td><span style="color: ${statusColor}">${s.status}</span></td>
+                                <td style="white-space: nowrap;" title="${rules}">${rules}</td>
+                            </tr>`;
+                        }).join('');
+                    }
+
                     document.getElementById('last-run').textContent = data.completed_at || '-';
                     document.getElementById('completed-at').style.display = data.completed_at ? 'inline' : 'none';
+                    
                 });
-                
-            fetch('/api/status').then(r => r.json()).then(data => {
-                const tbody = document.getElementById('setups-body');
-                const setups = data.active_setups || [];
-                if (setups.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #8b949e; padding: 1rem;">No active setups</td></tr>';
-                } else {
-                    tbody.innerHTML = setups.map(s => {
-                        let timeStr = '--';
-                        if (s.created_at) {
-                            // Extract HH:MM directly from the stored datetime string (already local time)
-                            const match = s.created_at.match(/(\\d{2}):(\\d{2})/);
-                            if (match) {
-                                timeStr = match[0];
-                            }
-                        }
-                        return `
-                        <tr>
-                            <td style="color: #8b949e;">${timeStr}</td>
-                            <td>${s.symbol}</td>
-                            <td style="color: ${s.direction === 'LONG' ? '#3fb950' : '#f85149'}; font-weight: bold;">${s.direction}</td>
-                            <td>${s.entry.price}</td>
-                            <td><span class="status-badge" style="background: rgba(110, 118, 129, 0.2); color: #e6edf3;">${s.status}</span></td>
-                            <td style="color: #8b949e; white-space: nowrap;" title="${s.rules_text}">${s.rules_text}</td>
-                        </tr>
-                    `; }).join('');
-                }
-            });
         }
         
-        function triggerInference() { 
-            const btn = document.getElementById('btn-run');
-            btn.textContent = 'Starting...';
-            btn.disabled = true;
+        function triggerInference(strategy) { 
+            strategy = strategy || 'main';
+            const btnId = strategy === 'main' ? 'btn-run' : 'btn-run-alt';
+            const btn = document.getElementById(btnId);
             
-            console.log('Triggering inference...');
-            fetch('/api/inference', { method: 'POST' })
+            // Optimistic UI update
+            if (btn) {
+                btn.textContent = 'Starting...';
+                btn.disabled = true;
+            }
+            
+            console.log('Triggering inference with strategy:', strategy);
+            fetch('/api/inference', { 
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ strategy: strategy }) 
+            })
                 .then(r => {
                     console.log('Inference triggered, status:', r.status);
                     if (!r.ok) return r.text().then(t => { throw new Error(t) });
@@ -218,8 +256,11 @@ HTML_TEMPLATE = """
                 .catch(e => {
                     console.error('Trigger error:', e);
                     alert('Failed to trigger inference: ' + e.message);
-                    btn.textContent = '▶ Run';
-                    btn.disabled = false;
+                    // Reset buttons if failed (updateStatus handles success/running)
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = strategy === 'main' ? '▶ Run' : '⚡ Run Alt';
+                    }
                 });
         }
         function setAutoInterval() {
@@ -235,9 +276,21 @@ HTML_TEMPLATE = """
             const savedTab = localStorage.getItem('active_tab') || 'analysis';
             switchTab(savedTab);
             updateStatus();
-            setInterval(updateStatus, 1000);
+            checkLiveStatus();
+            setInterval(updateStatus, 2000); // Poll inference status every 2s
+            setInterval(checkLiveStatus, 1000); // Poll live data every 1s
             initColumnResize();
         };
+
+        function checkLiveStatus() {
+            fetch('/api/status?t=' + Date.now())
+                .then(r => r.json())
+                .then(data => {
+                    if (data.current_time) document.getElementById('live-time').textContent = data.current_time;
+                    if (data.current_price) document.getElementById('live-price').textContent = Number(data.current_price).toFixed(2);
+                })
+                .catch(e => console.error('Live status error:', e));
+        }
         
         function initColumnResize() {
             const table = document.getElementById('setups-table');
@@ -294,13 +347,26 @@ HTML_TEMPLATE = """
 <body>
     <div class="header-container">
         <h1>Trading Daemon</h1>
-        <span id="completed-at" class="meta" style="display: none; font-size: 0.8rem; color: #6e7681;">Last: <span id="last-run"></span></span>
+        <div style="display: flex; gap: 1.5rem; align-items: center; font-size: 0.9rem;">
+            <div style="display: flex; gap: 0.5rem;">
+                <span style="color: #8b949e;">NY Time:</span>
+                <span id="live-time" style="font-family: monospace; color: #e6edf3;">--:--:--</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <span style="color: #8b949e;">Price:</span>
+                <span id="live-price" style="font-family: monospace; color: #58a6ff; font-weight: bold;">0.00</span>
+            </div>
+            <span id="completed-at" style="display: none; color: #6e7681; border-left: 1px solid #30363d; padding-left: 1.5rem;">
+                Last Run: <span id="last-run"></span>
+            </span>
+        </div>
     </div>
     
     <div class="main-container">
         <div class="card" style="flex-shrink: 0; flex: 0 0 auto;">
             <div class="controls">
-                <button id="btn-run" onclick="triggerInference()" class="btn-primary">▶ Run</button>
+                <button id="btn-run" onclick="triggerInference('main')" class="btn-primary">▶ Run</button>
+                <button id="btn-run-alt" onclick="triggerInference('alt')" class="btn-secondary">⚡ Run Alt</button>
                 <span id="status-badge" class="status-badge idle">IDLE</span>
                 <div class="auto-controls">
                     <label>Auto:</label>
@@ -385,6 +451,15 @@ def get_inference():
 @app.route("/api/inference", methods=["POST"])
 def trigger_inference():
     logger.info("Received manual inference request")
+    
+    # Get strategy from query or body (support both for flexibility)
+    strategy = request.args.get("strategy")
+    if not strategy:
+        data = request.get_json(silent=True) or {}
+        strategy = data.get("strategy", "main")
+        
+    logger.info(f"Strategy selected: {strategy}")
+
     if app_state.is_inference_running():
         return jsonify({"error": "Inference already in progress"}), 409
     
@@ -400,10 +475,17 @@ def trigger_inference():
             price_str = f"{app_state.last_price:.2f}" if app_state.last_price else "Unknown"
             context = f"Current Time: {time_str}\nCurrent Price: {price_str}"
             
-            app_state.start_inference(context=context)
-            logger.info(f"Starting inference with context: {context.replace('\\n', ', ')}")
-            logger.info("DEBUG: Calling _gemini_client.run_inference now...")
-            result = _gemini_client.run_inference(context_header=context)
+            # Select prompt file based on strategy
+            prompt_file = "prompts/user-prompt-alt.md" if strategy == "alt" else None
+            # Note: None defaults to main prompt in GeminiClient
+            
+            context_prefix = f"Strategy: {strategy.upper()}\n{context}"
+            
+            app_state.start_inference(context=context_prefix, strategy=strategy)
+            logger.info(f"Starting inference with context: {context_prefix.replace('\\n', ', ')}")
+            
+            logger.info(f"DEBUG: Calling _gemini_client.run_inference with strategy={strategy}...")
+            result = _gemini_client.run_inference(context_header=context, prompt_path=prompt_file)
             logger.info("DEBUG: _gemini_client.run_inference returned")
             
             error_patterns = ["Error", "critical error", "ModelNotFoundError", "fetch failed", "Exception"]

@@ -26,6 +26,7 @@ class InferenceState:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     context: Optional[str] = None
+    strategy: Optional[str] = None
 
 
 @dataclass
@@ -70,13 +71,14 @@ class DaemonState:
         with self._lock:
             return self.auto_inference_interval
 
-    def start_inference(self, context: str = None):
+    def start_inference(self, context: str = None, strategy: str = None):
         """Mark inference as started."""
         with self._lock:
             self.inference = InferenceState(
                 status=InferenceStatus.RUNNING,
                 started_at=datetime.now(NY_TZ),
-                context=context
+                context=context,
+                strategy=strategy
             )
 
     def complete_inference(self, result: str):
@@ -105,7 +107,10 @@ class DaemonState:
                 "started_at": self.inference.started_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.started_at else None,
                 "completed_at": self.inference.completed_at.strftime("%Y-%m-%d %H:%M:%S %Z") if self.inference.completed_at else None,
                 "context": self.inference.context,
-                "active_setups": [s.model_dump() for s in self.trade_manager.get_active_setups()]
+                "strategy": self.inference.strategy,
+                "active_setups": [s.model_dump() for s in self.trade_manager.get_active_setups()],
+                "current_time": datetime.now(NY_TZ).strftime("%H:%M:%S"),
+                "current_price": self.last_price or 0.0
             }
 
     def is_inference_running(self) -> bool:
@@ -125,7 +130,9 @@ class DaemonState:
                 "current_interval": self.current_interval,
                 "last_updated": formatted_time,
                 "auto_inference_interval": self.auto_inference_interval,
-                "active_setups": [s.model_dump() for s in self.trade_manager.get_active_setups()]
+                "active_setups": [s.model_dump() for s in self.trade_manager.get_active_setups()],
+                "current_time": datetime.now(NY_TZ).strftime("%H:%M:%S"),
+                "current_price": self.last_price or 0.0
             }
 
 
