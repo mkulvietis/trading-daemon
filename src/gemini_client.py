@@ -110,6 +110,9 @@ class GeminiClient:
         logger.info(f"Using gemini executable: {gemini_exec}")
         if "GEMINI_SYSTEM_MD" in env:
             logger.info(f"System prompt: {env['GEMINI_SYSTEM_MD']}")
+        
+        # Explicitly disable node-pty / console attachment features
+        env["NODE_SKIP_PLATFORM_CHECK"] = "1"
 
         try:
             # Run in headless mode with Pro model
@@ -126,11 +129,13 @@ class GeminiClient:
                 cmd, 
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,  # Capture stderr separately
+                stdin=subprocess.DEVNULL, # Prevent Node from trying to attach to console input
                 text=True, 
                 env=env,
                 encoding='utf-8',
                 cwd=str(self.project_root),
                 bufsize=1, # Line buffered
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
             )
             
             full_output = []
